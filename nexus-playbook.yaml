@@ -1,0 +1,93 @@
+---
+- name: Install java via apt package
+  hosts: droplets
+  vars_files:
+    - nexus-vars.yaml
+  tasks:
+    - name: update apt and setting the cache valid time
+      ansible.builtin.apt:
+        force_apt_get: true
+        cache_valid_time: 3600
+        autoclean: true
+        update_cache: true
+    - name: Install java version "{{ java.name_package }}"
+      ansible.builtin.apt:
+        name:
+          - "{{ java.name_package }}"
+    - name: Check java package
+      command: "java -version"
+      register: java_stat
+    - debug: "msg='java status: {{ java_stat.stderr_lines }}'"
+- name: Create Nexus user and nexus group
+  hosts: droplets
+  vars_files:
+    - nexus-vars.yaml
+  tasks:
+    - name: Create nexus user
+      ansible.builtin.user:
+        name: "{{ nexus_artifact.owner }}"
+        state: present
+    - name: Create nexus group
+      ansible.builtin.group:
+        name: "{{ nexus_artifact.group }}"
+        state: present
+- name: Download and unarchive
+  hosts: droplets
+  vars_files:
+    - nexus-vars.yaml
+  tasks:
+    - name: Download nexus artifact
+      ansible.builtin.get_url:
+        url: "{{ nexus_artifact.url }}"
+        dest: "{{ nexus_artifact.destination }}"
+        owner: "{{ nexus_artifact.owner }}"
+        group: "{{ nexus_artifact.group }}"
+        mode: "0755"
+      register: dowload_result
+    - name: Is nexus folder existing
+      ansible.builtin.find:
+        paths:
+          - "{{ nexus_artifact.destination }}"
+        file_type: "directory"
+        patterns: "nexus"
+      register: is_nexus_exist
+    - debug: "msg={{ is_nexus_exist  }}"
+    - name: Unarchive the downloaded artifact file
+      ansible.builtin.unarchive:
+        src: "{{ dowload_result.dest }}"
+        dest: "{{ nexus_artifact.destination }}"
+        remote_src: true
+        owner: "{{ nexus_artifact.owner }}"
+        group: "{{ nexus_artifact.owner }}"
+      when: is_nexus_exist.matched == 0
+    - debug:
+        msg: |
+          If it existed, the path is  {{ is_nexus_exist.files[0].path  }}
+    - name: Rename the folder bin of nexus
+      command: "mv {{ is_nexus_exist.files[0].path  }} {{ nexus_artifact.destination }}nexus "
+      when: is_nexus_exist.matched == 0
+- name: Replace the user start nexus
+  hosts: droplets
+  vars_files:
+    - nexus-vars.yaml
+  tasks:
+    - name: Replace the name's starter
+      ansible.builtin.replace:
+        regexp: "run_as_user=''"
+        path: "{{ nexus_artifact.destination }}nexus/bin/nexus"
+        replace: "run_as_user='nexus'"
+    - name: Fix bug "./nexus - 155 [[ - not found"
+      ansible.builtin.replace:
+        regexp: "#!/bin/sh"
+        path: "{{ nexus_artifact.destination }}nexus/bin/nexus"
+        replace: "#!/bin/bash"
+
+- name: Run nexus
+  hosts: droplets
+  become: true
+  become_user: nexus
+  vars_files:
+    - nexus-vars.yaml
+  tasks:
+    - name: Run nexus with nexus user
+      command: "{{ nexus_artifact.destination }}nexus/bin/nexus start"

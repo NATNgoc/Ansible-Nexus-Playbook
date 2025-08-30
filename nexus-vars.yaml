@@ -1,0 +1,6 @@
+java:
+  name_package: openjdk-17-jdk
+nexus_artifact:
+  destination: /opt/
+  target_folder_name: nexus
+  url: https://download.sonatype.com/nexus/3/nexus-3.83.1-03-linux-x86_64.tar.gz
