@@ -45,11 +45,8 @@
         mode: "0755"
       register: dowload_result
     - name: Is nexus folder existing
-      ansible.builtin.find:
-        paths:
-          - "{{ nexus_artifact.destination }}"
-        file_type: "directory"
-        patterns: "nexus"
+      ansible.builtin.stat:
+        path: "{{ nexus_artifact.destination }}{{ nexus_artifact.target_folder_name }}"
       register: is_nexus_exist
     - debug: "msg={{ is_nexus_exist  }}"
     - name: Unarchive the downloaded artifact file
@@ -59,13 +56,22 @@
         remote_src: true
         owner: "{{ nexus_artifact.owner }}"
         group: "{{ nexus_artifact.owner }}"
-      when: is_nexus_exist.matched == 0
+      when: not is_nexus_exist.stat.exists
+    - name: Find the nexus tar file path
+      find:
+        paths:
+          - "{{ nexus_artifact.destination }}"
+        file_type: "directory"
+        patterns: "nexus-*"
+      register: nexus_tar_folder 
+      when: not is_nexus_exist.stat.exists   
     - debug:
         msg: |
-          If it existed, the path is  {{ is_nexus_exist.files[0].path  }}
+          If it existed, the path is  {{ nexus_tar_folder.files[0].path  }}
+      when: not is_nexus_exist.stat.exists
     - name: Rename the folder bin of nexus
-      command: "mv {{ is_nexus_exist.files[0].path  }} {{ nexus_artifact.destination }}nexus "
-      when: is_nexus_exist.matched == 0
+      command: "mv {{ nexus_tar_folder.files[0].path  }} {{ nexus_artifact.destination }}{{ nexus_artifact.target_folder_name }}"
+      when: not is_nexus_exist.stat.exists
 - name: Replace the user start nexus
   hosts: droplets
   vars_files:
@@ -74,12 +80,12 @@
     - name: Replace the name's starter
       ansible.builtin.replace:
         regexp: "run_as_user=''"
-        path: "{{ nexus_artifact.destination }}nexus/bin/nexus"
+        path: "{{ nexus_artifact.destination }}{{ nexus_artifact.target_folder_name }}/bin/nexus"
         replace: "run_as_user='nexus'"
     - name: Fix bug "./nexus - 155 [[ - not found"
       ansible.builtin.replace:
         regexp: "#!/bin/sh"
-        path: "{{ nexus_artifact.destination }}nexus/bin/nexus"
+        path: "{{ nexus_artifact.destination }}{{ nexus_artifact.target_folder_name }}/bin/nexus"
         replace: "#!/bin/bash"
 
 - name: Run nexus
@@ -90,4 +96,16 @@
     - nexus-vars.yaml
   tasks:
     - name: Run nexus with nexus user
-      command: "{{ nexus_artifact.destination }}nexus/bin/nexus start"
+      command: "{{ nexus_artifact.destination }}{{ nexus_artifact.target_folder_name }}/bin/nexus start"
+    - name: Wait for nexus initialize
+      wait_for:
+        port: 8081
+        timeout: 30
+    - name: Check nexus port status
+      shell: |
+        echo "=== Port Status ===" 
+        ss -utlpn | grep 8081
+        echo "================="
+      register: nexus_service_status
+    - debug: "msg={{ nexus_service_status.stdout_lines  }}"  
+
